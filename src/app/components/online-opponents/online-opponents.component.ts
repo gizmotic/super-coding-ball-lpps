@@ -21,12 +21,21 @@ import {LocalStorageService} from '../../services/local-storage.service';
 import {DancingMonstersComponent} from '../dancing-monsters/dancing-monsters.component';
 import {AnonPicturePipe} from '../../services/anon-picture.pipe';
 import {FormsModule} from '@angular/forms';
+import {appRuntimeConfig} from '../../app-runtime-config';
 
 export enum GamePoint {
   LOST = 0,
   DRAW,
   WON
 }
+
+type MatchupStats = {wins: number; total: number};
+type AggregatedPlayerStats = {
+  userDisplay: Opponent['userDisplay'];
+  lastSeen: number;
+  activeMatchups: Map<string, MatchupStats>;
+  points: number;
+};
 
 @Component({
   selector: 'app-online-opponents',
@@ -117,36 +126,113 @@ export class OnlineOpponentsComponent implements OnInit, OnDestroy {
       ?.dailyGames
       ?? {};
 
-    for (const [dayTimestamp, games] of Object.entries(allGames)) {
-      for (const userId of Object.keys(games)) {
-        const userDailyRecap = games[userId];
-        let searchedUser = this.opponents.find(user => user.webcomId === userId);
-        if (!searchedUser) {
-          searchedUser = new Opponent(userId, userDailyRecap.userDisplay, 0, 0, +dayTimestamp);
-          this.opponents.push(searchedUser);
-        } else if (+dayTimestamp > searchedUser.lastSeen) {
-          searchedUser.lastSeen = +dayTimestamp;
-          searchedUser.userDisplay = userDailyRecap.userDisplay;
+    const playersStats = new Map<string, AggregatedPlayerStats>();
+
+    const getOrCreatePlayerStats = (userId: string, userDisplay: Opponent['userDisplay'], lastSeen: number): AggregatedPlayerStats => {
+      let playerStats = playersStats.get(userId);
+      if (!playerStats) {
+        playerStats = {
+          userDisplay,
+          lastSeen,
+          activeMatchups: new Map<string, MatchupStats>(),
+          points: 0
+        };
+        playersStats.set(userId, playerStats);
+      } else {
+        if (userDisplay) {
+          playerStats.userDisplay = userDisplay;
         }
+        if (lastSeen > playerStats.lastSeen) {
+          playerStats.lastSeen = lastSeen;
+        }
+      }
+      return playerStats;
+    };
+
+    for (const [dayTimestamp, games] of Object.entries(allGames)) {
+      for (const [userId, userDailyRecap] of Object.entries(games)) {
+        const timestamp = +dayTimestamp;
+        const playerStats = getOrCreatePlayerStats(userId, userDailyRecap.userDisplay, timestamp);
         if (!userDailyRecap.dailyGames) {
           continue;
         }
-        for (const opponentId of Object.keys(userDailyRecap.dailyGames)) {
-          const gameResult = userDailyRecap.dailyGames[opponentId];
-          const searchedOpponent = this.opponents.find(opp => opp.webcomId === opponentId);
-          if (!searchedOpponent) {
-            this.opponents.push(new Opponent(opponentId, null, 2 - gameResult, 0, 0));
-          } else {
-            searchedOpponent.points += 2 - gameResult;
+        for (const [opponentId, gameResult] of Object.entries(userDailyRecap.dailyGames)) {
+          getOrCreatePlayerStats(opponentId, null, 0);
+          let matchupStats = playerStats.activeMatchups.get(opponentId);
+          if (!matchupStats) {
+            matchupStats = {wins: 0, total: 0};
+            playerStats.activeMatchups.set(opponentId, matchupStats);
           }
-          searchedUser.points += gameResult;
+          matchupStats.total += 1;
+          if (gameResult === GamePoint.WON) {
+            matchupStats.wins += 1;
+          }
         }
       }
     }
-    this.opponents = this.opponents.map(opponent => {
-      opponent.lastResult = myGames[opponent.webcomId];
+
+    this.computeLeaderboardPoints(playersStats);
+
+    this.opponents = Array.from(playersStats.entries()).map(([userId, playerStats]) => {
+      const opponent = new Opponent(userId, playerStats.userDisplay, playerStats.points, 0, playerStats.lastSeen);
+      opponent.lastResult = myGames[userId];
       return opponent;
     });
+  }
+
+  private computeLeaderboardPoints(playersStats: Map<string, AggregatedPlayerStats>): void {
+    const rankBasedPoints = (rank: number): number => {
+      const highestScoringRank = appRuntimeConfig.leaderboard.highestScoringRank;
+      const maxPointsPerWin = appRuntimeConfig.leaderboard.maxPointsPerWin;
+      if (rank < 1 || rank > highestScoringRank) {
+        return 0;
+      }
+      return Math.round(maxPointsPerWin - (rank - 1) * ((maxPointsPerWin - 1) / (highestScoringRank - 1)));
+    };
+
+    const currentRanks = new Map<string, number>();
+    const sortedIds = Array.from(playersStats.keys()).sort((a, b) => a.localeCompare(b));
+    sortedIds.forEach((userId, index) => currentRanks.set(userId, index + 1));
+
+    const topCountedWins = appRuntimeConfig.leaderboard.topCountedWins;
+
+    for (let iteration = 0; iteration < playersStats.size * 2; iteration++) {
+      for (const playerStats of playersStats.values()) {
+        const candidatePoints: number[] = [];
+        for (const [opponentId, matchupStats] of playerStats.activeMatchups.entries()) {
+          if (matchupStats.wins === 0) {
+            continue;
+          }
+          if (matchupStats.wins / matchupStats.total < 0.5) {
+            continue;
+          }
+          const opponentRank = currentRanks.get(opponentId) ?? Number.MAX_SAFE_INTEGER;
+          const points = rankBasedPoints(opponentRank);
+          if (points > 0) {
+            candidatePoints.push(points);
+          }
+        }
+        candidatePoints.sort((a, b) => b - a);
+        playerStats.points = candidatePoints.slice(0, topCountedWins).reduce((sum, points) => sum + points, 0);
+      }
+
+      const previousRanks = new Map(currentRanks);
+      const rankingOrder = Array.from(playersStats.entries()).sort((a, b) => {
+        if (a[1].points !== b[1].points) {
+          return b[1].points - a[1].points;
+        }
+        if (a[1].lastSeen !== b[1].lastSeen) {
+          return b[1].lastSeen - a[1].lastSeen;
+        }
+        return b[0].localeCompare(a[0]);
+      });
+      rankingOrder.forEach(([userId], index) => currentRanks.set(userId, index + 1));
+
+      const hasConverged = Array.from(currentRanks.entries()).every(([userId, rank]) => previousRanks.get(userId) === rank);
+      if (hasConverged) {
+        break;
+      }
+    }
   }
 
   private computeRankings(): void {
