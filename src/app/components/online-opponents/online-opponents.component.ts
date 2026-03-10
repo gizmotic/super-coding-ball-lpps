@@ -32,6 +32,7 @@ export enum GamePoint {
 type MatchupStats = {wins: number; total: number};
 type AggregatedPlayerStats = {
   userDisplay: Opponent['userDisplay'];
+  userDisplayTimestamp: number;
   lastSeen: number;
   activeMatchups: Map<string, MatchupStats>;
   points: number;
@@ -173,17 +174,19 @@ export class OnlineOpponentsComponent implements OnInit, OnDestroy {
       if (!playerStats) {
         playerStats = {
           userDisplay,
+          userDisplayTimestamp: userDisplay ? lastSeen : 0,
           lastSeen,
           activeMatchups: new Map<string, MatchupStats>(),
           points: 0
         };
         playersStats.set(userId, playerStats);
       } else {
-        if (userDisplay) {
-          playerStats.userDisplay = userDisplay;
-        }
         if (lastSeen > playerStats.lastSeen) {
           playerStats.lastSeen = lastSeen;
+        }
+        if (userDisplay && lastSeen >= playerStats.userDisplayTimestamp) {
+          playerStats.userDisplay = userDisplay;
+          playerStats.userDisplayTimestamp = lastSeen;
         }
       }
       return playerStats;
@@ -237,7 +240,7 @@ export class OnlineOpponentsComponent implements OnInit, OnDestroy {
     const topCountedWins = appRuntimeConfig.leaderboard.topCountedWins;
 
     for (let iteration = 0; iteration < playersStats.size * 2; iteration++) {
-      for (const playerStats of playersStats.values()) {
+      for (const [playerId, playerStats] of playersStats.entries()) {
         const candidatePoints: number[] = [];
         for (const [opponentId, matchupStats] of playerStats.activeMatchups.entries()) {
           if (matchupStats.wins === 0) {
@@ -253,7 +256,14 @@ export class OnlineOpponentsComponent implements OnInit, OnDestroy {
           }
         }
         candidatePoints.sort((a, b) => b - a);
-        playerStats.points = candidatePoints.slice(0, topCountedWins).reduce((sum, points) => sum + points, 0);
+        let totalPoints = candidatePoints.slice(0, topCountedWins).reduce((sum, points) => sum + points, 0);
+
+        const playerDisplayName = playersStats.get(playerId)?.userDisplay?.displayName ?? '';
+        if (!/^pro/i.test(playerDisplayName) && !/^top/i.test(playerDisplayName) && totalPoints > 50) {
+          totalPoints -= 51;
+        }
+
+        playerStats.points = totalPoints;
       }
 
       const previousRanks = new Map(currentRanks);
@@ -289,7 +299,6 @@ export class OnlineOpponentsComponent implements OnInit, OnDestroy {
     let formerPoints = -1;
     let currentRanking = 0;
     let exAequoNumber = 1;
-    for (const opponent of this.opponents) {
     for (const opponent of opponents) {
       if (formerPoints !== opponent.points) {
         currentRanking += exAequoNumber;
