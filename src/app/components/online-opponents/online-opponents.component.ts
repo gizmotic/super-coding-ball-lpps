@@ -9,7 +9,7 @@
  * or see the "LICENSE.txt" file for more details.
  */
 
-import {Component, OnDestroy, OnInit, signal, ViewChild, WritableSignal} from '@angular/core';
+import {Component, OnDestroy, OnInit, ViewChild} from '@angular/core';
 import {AllGames, ConnectionStatus, Opponent} from '../../models/webcom-models';
 import {OnlineService} from '../../services/online.service';
 import {TranslatePipe, TranslateService} from '@ngx-translate/core';
@@ -40,7 +40,8 @@ type AggregatedPlayerStats = {
 @Component({
   selector: 'app-online-opponents',
   imports: [FormsModule, RouterLink, TranslatePipe, DancingMonstersComponent, AnonPicturePipe],
-  templateUrl: './online-opponents.component.html'
+  templateUrl: './online-opponents.component.html',
+  styleUrl: './online-opponents.component.scss'
 })
 
 export class OnlineOpponentsComponent implements OnInit, OnDestroy {
@@ -49,7 +50,9 @@ export class OnlineOpponentsComponent implements OnInit, OnDestroy {
   GamePoint = GamePoint;
   public ConnectionStatus = ConnectionStatus;
   private connectionStatusSubscription?: Subscription;
+  private refreshIntervalId?: ReturnType<typeof setInterval>;
   opponents: Opponent[] = [];
+  teamOpponents: Opponent[] = [];
   lastResult?: number;
   filteredOpponents: Opponent[] = [];
   personalRanking = 0;
@@ -72,6 +75,26 @@ export class OnlineOpponentsComponent implements OnInit, OnDestroy {
       this.normalized(opp.userDisplay?.displayName ?? '').includes(this.normalized(term)));
   }
 
+  get proTeamPoints(): number {
+    return this.teamOpponents
+      .filter(opponent => this.getTeamClass(opponent) === 'team-pro')
+      .reduce((sum, opponent) => sum + opponent.points, 0);
+  }
+
+  get topTeamPoints(): number {
+    return this.teamOpponents
+      .filter(opponent => this.getTeamClass(opponent) === 'team-top')
+      .reduce((sum, opponent) => sum + opponent.points, 0);
+  }
+
+  get teamLeadPercent(): number {
+    const total = this.proTeamPoints + this.topTeamPoints;
+    if (total === 0) {
+      return 50;
+    }
+    return Math.max(0, Math.min(100, (this.proTeamPoints / total) * 100));
+  }
+
   private normalized(text: string): string {
     return text.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '');
   }
@@ -87,6 +110,7 @@ export class OnlineOpponentsComponent implements OnInit, OnDestroy {
   }
 
   ngOnInit(): void {
+    this.refreshIntervalId = setInterval(() => window.location.reload(), 60000);
     if (this.onlineService.connectionStatus === ConnectionStatus.Connected) {
       this.loadData();
     }
@@ -101,6 +125,9 @@ export class OnlineOpponentsComponent implements OnInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    if (this.refreshIntervalId) {
+      clearInterval(this.refreshIntervalId);
+    }
     this.connectionStatusSubscription?.unsubscribe();
     this.modalService.dismissAll();
   }
@@ -114,8 +141,21 @@ export class OnlineOpponentsComponent implements OnInit, OnDestroy {
     this.computeOpponentsScore(allGames);
     // Opponents without userDisplay are opponents who have been challenged, but who didn't connect in the 15 days
     this.opponents = this.opponents.filter(opponent => !!opponent.userDisplay);
-    this.computeRankings();
+    this.computeRankings(this.opponents);
     this.filteredOpponents = this.opponents;
+    this.teamOpponents = this.opponents.filter(opponent => this.getTeamClass(opponent) !== '');
+    this.computeRankings(this.teamOpponents);
+  }
+
+  getTeamClass(opponent: Opponent): '' | 'team-pro' | 'team-top' {
+    const displayName = opponent.userDisplay?.displayName?.trim() ?? '';
+    if (/^pro/i.test(displayName)) {
+      return 'team-pro';
+    }
+    if (/^top/i.test(displayName)) {
+      return 'team-top';
+    }
+    return '';
   }
 
   private computeOpponentsScore(allGames: AllGames): void {
@@ -249,7 +289,7 @@ export class OnlineOpponentsComponent implements OnInit, OnDestroy {
     let formerPoints = -1;
     let currentRanking = 0;
     let exAequoNumber = 1;
-    for (const opponent of this.opponents) {
+    for (const opponent of opponents) {
       if (formerPoints !== opponent.points) {
         currentRanking += exAequoNumber;
         exAequoNumber = 1;
