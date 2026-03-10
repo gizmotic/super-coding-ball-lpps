@@ -275,8 +275,8 @@ export class OnlineOpponentsComponent implements OnInit, OnDestroy {
     }
   }
 
-  private computeRankings(): void {
-    this.opponents.sort((a, b) => {
+  private computeRankings(opponents: Opponent[]): void {
+    opponents.sort((a, b) => {
       if (a.points !== b.points) {
         return b.points - a.points;
       } else if (a.lastSeen !== b.lastSeen) {
@@ -289,6 +289,7 @@ export class OnlineOpponentsComponent implements OnInit, OnDestroy {
     let formerPoints = -1;
     let currentRanking = 0;
     let exAequoNumber = 1;
+    for (const opponent of this.opponents) {
     for (const opponent of opponents) {
       if (formerPoints !== opponent.points) {
         currentRanking += exAequoNumber;
