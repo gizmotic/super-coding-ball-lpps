@@ -76,24 +76,49 @@ export class OnlineOpponentsComponent implements OnInit, OnDestroy {
       this.normalized(opp.userDisplay?.displayName ?? '').includes(this.normalized(term)));
   }
 
-  get vipTeamPoints(): number {
+  get firstTeamPoints(): number {
     return this.teamOpponents
-      .filter(opponent => this.getTeamClass(opponent) === 'team-vip')
+      .filter(opponent => this.getTeamClass(opponent) === 'team-first')
       .reduce((sum, opponent) => sum + opponent.points, 0);
   }
 
-  get funTeamPoints(): number {
+  get secondTeamPoints(): number {
     return this.teamOpponents
-      .filter(opponent => this.getTeamClass(opponent) === 'team-fun')
+      .filter(opponent => this.getTeamClass(opponent) === 'team-second')
       .reduce((sum, opponent) => sum + opponent.points, 0);
   }
 
   get teamLeadPercent(): number {
-    const total = this.vipTeamPoints + this.funTeamPoints;
+    const total = this.firstTeamPoints + this.secondTeamPoints;
     if (total === 0) {
       return 50;
     }
-    return Math.max(0, Math.min(100, (this.vipTeamPoints / total) * 100));
+    return Math.max(0, Math.min(100, (this.firstTeamPoints / total) * 100));
+  }
+
+
+  get firstTeamName(): string {
+    return appRuntimeConfig.teamsLeaderboard.firstTeamName;
+  }
+
+  get secondTeamName(): string {
+    return appRuntimeConfig.teamsLeaderboard.secondTeamName;
+  }
+
+  get firstTeamColor(): string {
+    return appRuntimeConfig.teamsLeaderboard.firstTeamColor;
+  }
+
+  get secondTeamColor(): string {
+    return appRuntimeConfig.teamsLeaderboard.secondTeamColor;
+  }
+
+  private belongsToFirstTeam(displayName: string): boolean {
+    return displayName.toLowerCase().startsWith(this.firstTeamName.toLowerCase());
+  }
+
+  private belongsToSecondTeam(displayName: string): boolean {
+    return displayName.toLowerCase().startsWith(this.secondTeamName.toLowerCase());
   }
 
   private normalized(text: string): string {
@@ -148,13 +173,13 @@ export class OnlineOpponentsComponent implements OnInit, OnDestroy {
     this.computeRankings(this.teamOpponents);
   }
 
-  getTeamClass(opponent: Opponent): '' | 'team-vip' | 'team-fun' {
+  getTeamClass(opponent: Opponent): '' | 'team-first' | 'team-second' {
     const displayName = opponent.userDisplay?.displayName?.trim() ?? '';
-    if (/^vip/i.test(displayName)) {
-      return 'team-vip';
+    if (this.belongsToFirstTeam(displayName)) {
+      return 'team-first';
     }
-    if (/^fun/i.test(displayName)) {
-      return 'team-fun';
+    if (this.belongsToSecondTeam(displayName)) {
+      return 'team-second';
     }
     return '';
   }
@@ -259,7 +284,7 @@ export class OnlineOpponentsComponent implements OnInit, OnDestroy {
         let totalPoints = candidatePoints.slice(0, topCountedWins).reduce((sum, points) => sum + points, 0);
 
         const playerDisplayName = playersStats.get(playerId)?.userDisplay?.displayName ?? '';
-        if (!/^vip/i.test(playerDisplayName) && !/^fun/i.test(playerDisplayName) && totalPoints > 50) {
+        if (!this.belongsToFirstTeam(playerDisplayName) && !this.belongsToSecondTeam(playerDisplayName) && totalPoints > 50) {
           totalPoints -= 51;
         }
 

@@ -17,6 +17,12 @@ export const appRuntimeConfig = {
     topCountedWins: 5,
     highestScoringRank: 50,
     maxPointsPerWin: 50
+  },
+  teamsLeaderboard: {
+    firstTeamName: 'VIP',
+    secondTeamName: 'FUN',
+    firstTeamColor: 'gold',
+    secondTeamColor: 'greenyellow'
   }
 };
 
