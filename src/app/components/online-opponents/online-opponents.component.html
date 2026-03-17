@@ -65,12 +65,12 @@
 
       <div class="team-lead-wrapper mb-2 mx-auto col-sm-10 col-md-10 col-lg-10">
         <div class="team-lead-bar">
-          <div class="team-lead-pro" [style.width.%]="teamLeadPercent"></div>
-          <div class="team-lead-top" [style.width.%]="100 - teamLeadPercent"></div>
+          <div class="team-lead-vip" [style.width.%]="teamLeadPercent"></div>
+          <div class="team-lead-fun" [style.width.%]="100 - teamLeadPercent"></div>
           <div class="team-lead-center"></div>
         </div>
         <div class="team-lead-label mt-1">
-          PRO {{proTeamPoints}} - {{topTeamPoints}} TOP
+          VIP {{vipTeamPoints}} - {{funTeamPoints}} FUN
         </div>
       </div>
 
@@ -102,8 +102,8 @@
             @for (opponent of filteredOpponents; track opponent.webcomId) {
               <tr (click)="play(opponent.webcomId)"
                   [class.bg-secondary]="opponent.webcomId === onlineService.webcomId"
-                  [class.team-pro]="getTeamClass(opponent) === 'team-pro'"
-                  [class.team-top]="getTeamClass(opponent) === 'team-top'">
+                  [class.team-vip]="getTeamClass(opponent) === 'team-vip'"
+                  [class.team-fun]="getTeamClass(opponent) === 'team-fun'">
                 <td><button class="btn text-start px-0">{{opponent.ranking}}</button></td>
                 @if(opponent.userDisplay) {
                   <td class="p-0">
@@ -136,20 +136,20 @@
           <table class="table table-sm table-hover text-start mb-0">
             <thead class="table-dark">
             <tr>
-              <th class="text-center" scope="col" colspan="4">Team-Rangliste PRO vs TOP</th>
+              <th class="text-center" scope="col" colspan="4">Team-Rangliste VIP vs FUN</th>
             </tr>
             </thead>
             <tbody>
             @for (opponent of teamOpponents; track opponent.webcomId) {
               <tr [class.bg-secondary]="opponent.webcomId === onlineService.webcomId"
-                  [class.team-pro]="getTeamClass(opponent) === 'team-pro'"
-                  [class.team-top]="getTeamClass(opponent) === 'team-top'">
+                  [class.team-vip]="getTeamClass(opponent) === 'team-vip'"
+                  [class.team-fun]="getTeamClass(opponent) === 'team-fun'">
                 <td>{{opponent.ranking}}</td>
                 <td>{{opponent.userDisplay?.displayName}}</td>
                 <td>{{opponent.points}}{{"ONLINE.OPP_POINTS" | translate }}</td>
                 <td>
-                  @if(getTeamClass(opponent) === 'team-pro') {PRO}
-                  @if(getTeamClass(opponent) === 'team-top') {TOP}
+                  @if(getTeamClass(opponent) === 'team-vip') {VIP}
+                  @if(getTeamClass(opponent) === 'team-fun') {FUN}
                 </td>
               </tr>
             }

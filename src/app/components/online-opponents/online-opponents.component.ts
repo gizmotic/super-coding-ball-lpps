@@ -76,24 +76,24 @@ export class OnlineOpponentsComponent implements OnInit, OnDestroy {
       this.normalized(opp.userDisplay?.displayName ?? '').includes(this.normalized(term)));
   }
 
-  get proTeamPoints(): number {
+  get vipTeamPoints(): number {
     return this.teamOpponents
-      .filter(opponent => this.getTeamClass(opponent) === 'team-pro')
+      .filter(opponent => this.getTeamClass(opponent) === 'team-vip')
       .reduce((sum, opponent) => sum + opponent.points, 0);
   }
 
-  get topTeamPoints(): number {
+  get funTeamPoints(): number {
     return this.teamOpponents
-      .filter(opponent => this.getTeamClass(opponent) === 'team-top')
+      .filter(opponent => this.getTeamClass(opponent) === 'team-fun')
       .reduce((sum, opponent) => sum + opponent.points, 0);
   }
 
   get teamLeadPercent(): number {
-    const total = this.proTeamPoints + this.topTeamPoints;
+    const total = this.vipTeamPoints + this.funTeamPoints;
     if (total === 0) {
       return 50;
     }
-    return Math.max(0, Math.min(100, (this.proTeamPoints / total) * 100));
+    return Math.max(0, Math.min(100, (this.vipTeamPoints / total) * 100));
   }
 
   private normalized(text: string): string {
@@ -148,13 +148,13 @@ export class OnlineOpponentsComponent implements OnInit, OnDestroy {
     this.computeRankings(this.teamOpponents);
   }
 
-  getTeamClass(opponent: Opponent): '' | 'team-pro' | 'team-top' {
+  getTeamClass(opponent: Opponent): '' | 'team-vip' | 'team-fun' {
     const displayName = opponent.userDisplay?.displayName?.trim() ?? '';
-    if (/^pro/i.test(displayName)) {
-      return 'team-pro';
+    if (/^vip/i.test(displayName)) {
+      return 'team-vip';
     }
-    if (/^top/i.test(displayName)) {
-      return 'team-top';
+    if (/^fun/i.test(displayName)) {
+      return 'team-fun';
     }
     return '';
   }
@@ -259,7 +259,7 @@ export class OnlineOpponentsComponent implements OnInit, OnDestroy {
         let totalPoints = candidatePoints.slice(0, topCountedWins).reduce((sum, points) => sum + points, 0);
 
         const playerDisplayName = playersStats.get(playerId)?.userDisplay?.displayName ?? '';
-        if (!/^pro/i.test(playerDisplayName) && !/^top/i.test(playerDisplayName) && totalPoints > 50) {
+        if (!/^vip/i.test(playerDisplayName) && !/^fun/i.test(playerDisplayName) && totalPoints > 50) {
           totalPoints -= 51;
         }
 
