@@ -77,16 +77,21 @@ export class OnlineOpponentsComponent implements OnInit, OnDestroy {
       this.normalized(opp.userDisplay?.displayName ?? '').includes(this.normalized(term)));
   }
 
-  get firstTeamPoints(): number {
+  private pointsOfBestTeamPlayers(teamClass: 'team-first' | 'team-second', bestPlayersCount = 10): number {
     return this.teamOpponents
-      .filter(opponent => this.getTeamClass(opponent) === 'team-first')
-      .reduce((sum, opponent) => sum + opponent.points, 0);
+      .filter(opponent => this.getTeamClass(opponent) === teamClass)
+      .map(opponent => opponent.points)
+      .sort((a, b) => b - a)
+      .slice(0, bestPlayersCount)
+      .reduce((sum, points) => sum + points, 0);
+  }
+
+  get firstTeamPoints(): number {
+    return this.pointsOfBestTeamPlayers('team-first');
   }
 
   get secondTeamPoints(): number {
-    return this.teamOpponents
-      .filter(opponent => this.getTeamClass(opponent) === 'team-second')
-      .reduce((sum, opponent) => sum + opponent.points, 0);
+    return this.pointsOfBestTeamPlayers('team-second');
   }
 
   get teamLeadPercent(): number {
@@ -311,7 +316,11 @@ export class OnlineOpponentsComponent implements OnInit, OnDestroy {
       }
 
       candidatePoints.sort((a, b) => b - a);
+      const countedWinsUsed = Math.min(candidatePoints.length, topCountedWins);
+      const maxPossibleForWins = Array.from({length: countedWinsUsed}, (_, index) => rankBasedPoints(index + 1))
+        .reduce((sum, points) => sum + points, 0);
       let totalPoints = candidatePoints.slice(0, topCountedWins).reduce((sum, points) => sum + points, 0);
+      totalPoints = Math.min(totalPoints, maxPossibleForWins);
 
       const playerDisplayName = playersStats.get(playerId)?.userDisplay?.displayName ?? '';
       if (!this.belongsToFirstTeam(playerDisplayName) && !this.belongsToSecondTeam(playerDisplayName) && totalPoints > 50) {
