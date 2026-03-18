@@ -35,6 +35,7 @@ type AggregatedPlayerStats = {
   userDisplayTimestamp: number;
   lastSeen: number;
   activeMatchups: Map<string, MatchupStats>;
+  rankingBasePoints: number;
   points: number;
 };
 
@@ -114,11 +115,13 @@ export class OnlineOpponentsComponent implements OnInit, OnDestroy {
   }
 
   private belongsToFirstTeam(displayName: string): boolean {
-    return displayName.toLowerCase().startsWith(this.firstTeamName.toLowerCase());
+    const firstTeamName = this.firstTeamName.trim().toLowerCase();
+    return !!firstTeamName && displayName.toLowerCase().startsWith(firstTeamName);
   }
 
   private belongsToSecondTeam(displayName: string): boolean {
-    return displayName.toLowerCase().startsWith(this.secondTeamName.toLowerCase());
+    const secondTeamName = this.secondTeamName.trim().toLowerCase();
+    return !!secondTeamName && displayName.toLowerCase().startsWith(secondTeamName);
   }
 
   private normalized(text: string): string {
@@ -202,6 +205,7 @@ export class OnlineOpponentsComponent implements OnInit, OnDestroy {
           userDisplayTimestamp: userDisplay ? lastSeen : 0,
           lastSeen,
           activeMatchups: new Map<string, MatchupStats>(),
+          rankingBasePoints: 0,
           points: 0
         };
         playersStats.set(userId, playerStats);
@@ -232,6 +236,7 @@ export class OnlineOpponentsComponent implements OnInit, OnDestroy {
             playerStats.activeMatchups.set(opponentId, matchupStats);
           }
           matchupStats.total += 1;
+          playerStats.rankingBasePoints += gameResult;
           if (gameResult === GamePoint.WON) {
             matchupStats.wins += 1;
           }
@@ -239,7 +244,8 @@ export class OnlineOpponentsComponent implements OnInit, OnDestroy {
       }
     }
 
-    this.computeLeaderboardPoints(playersStats);
+    const strengthRanks = this.computeStrengthRanks(playersStats);
+    this.computeLeaderboardPoints(playersStats, strengthRanks);
 
     this.opponents = Array.from(playersStats.entries()).map(([userId, playerStats]) => {
       const opponent = new Opponent(userId, playerStats.userDisplay, playerStats.points, 0, playerStats.lastSeen);
@@ -248,7 +254,35 @@ export class OnlineOpponentsComponent implements OnInit, OnDestroy {
     });
   }
 
-  private computeLeaderboardPoints(playersStats: Map<string, AggregatedPlayerStats>): void {
+  private computeStrengthRanks(playersStats: Map<string, AggregatedPlayerStats>): Map<string, number> {
+    const sortedPlayers = Array.from(playersStats.entries()).sort((a, b) => {
+      if (a[1].rankingBasePoints !== b[1].rankingBasePoints) {
+        return b[1].rankingBasePoints - a[1].rankingBasePoints;
+      }
+      if (a[1].lastSeen !== b[1].lastSeen) {
+        return b[1].lastSeen - a[1].lastSeen;
+      }
+      return b[0].localeCompare(a[0]);
+    });
+
+    const ranks = new Map<string, number>();
+    let formerPoints = Number.NaN;
+    let currentRanking = 0;
+    let exAequoNumber = 1;
+    for (const [playerId, playerStats] of sortedPlayers) {
+      if (formerPoints !== playerStats.rankingBasePoints) {
+        currentRanking += exAequoNumber;
+        exAequoNumber = 1;
+        formerPoints = playerStats.rankingBasePoints;
+      } else {
+        exAequoNumber++;
+      }
+      ranks.set(playerId, currentRanking);
+    }
+    return ranks;
+  }
+
+  private computeLeaderboardPoints(playersStats: Map<string, AggregatedPlayerStats>, strengthRanks: Map<string, number>): void {
     const rankBasedPoints = (rank: number): number => {
       const highestScoringRank = appRuntimeConfig.leaderboard.highestScoringRank;
       const maxPointsPerWin = appRuntimeConfig.leaderboard.maxPointsPerWin;
@@ -258,55 +292,33 @@ export class OnlineOpponentsComponent implements OnInit, OnDestroy {
       return Math.round(maxPointsPerWin - (rank - 1) * ((maxPointsPerWin - 1) / (highestScoringRank - 1)));
     };
 
-    const currentRanks = new Map<string, number>();
-    const sortedIds = Array.from(playersStats.keys()).sort((a, b) => a.localeCompare(b));
-    sortedIds.forEach((userId, index) => currentRanks.set(userId, index + 1));
-
     const topCountedWins = appRuntimeConfig.leaderboard.topCountedWins;
 
-    for (let iteration = 0; iteration < playersStats.size * 2; iteration++) {
-      for (const [playerId, playerStats] of playersStats.entries()) {
-        const candidatePoints: number[] = [];
-        for (const [opponentId, matchupStats] of playerStats.activeMatchups.entries()) {
-          if (matchupStats.wins === 0) {
-            continue;
-          }
-          if (matchupStats.wins / matchupStats.total < 0.5) {
-            continue;
-          }
-          const opponentRank = currentRanks.get(opponentId) ?? Number.MAX_SAFE_INTEGER;
-          const points = rankBasedPoints(opponentRank);
-          if (points > 0) {
-            candidatePoints.push(points);
-          }
+    for (const [playerId, playerStats] of playersStats.entries()) {
+      const candidatePoints: number[] = [];
+      for (const [opponentId, matchupStats] of playerStats.activeMatchups.entries()) {
+        if (matchupStats.wins === 0) {
+          continue;
         }
-        candidatePoints.sort((a, b) => b - a);
-        let totalPoints = candidatePoints.slice(0, topCountedWins).reduce((sum, points) => sum + points, 0);
-
-        const playerDisplayName = playersStats.get(playerId)?.userDisplay?.displayName ?? '';
-        if (!this.belongsToFirstTeam(playerDisplayName) && !this.belongsToSecondTeam(playerDisplayName) && totalPoints > 50) {
-          totalPoints -= 51;
+        if (matchupStats.wins / matchupStats.total < 0.5) {
+          continue;
         }
-
-        playerStats.points = totalPoints;
+        const opponentRank = strengthRanks.get(opponentId) ?? Number.MAX_SAFE_INTEGER;
+        const points = rankBasedPoints(opponentRank);
+        if (points > 0) {
+          candidatePoints.push(points);
+        }
       }
 
-      const previousRanks = new Map(currentRanks);
-      const rankingOrder = Array.from(playersStats.entries()).sort((a, b) => {
-        if (a[1].points !== b[1].points) {
-          return b[1].points - a[1].points;
-        }
-        if (a[1].lastSeen !== b[1].lastSeen) {
-          return b[1].lastSeen - a[1].lastSeen;
-        }
-        return b[0].localeCompare(a[0]);
-      });
-      rankingOrder.forEach(([userId], index) => currentRanks.set(userId, index + 1));
+      candidatePoints.sort((a, b) => b - a);
+      let totalPoints = candidatePoints.slice(0, topCountedWins).reduce((sum, points) => sum + points, 0);
 
-      const hasConverged = Array.from(currentRanks.entries()).every(([userId, rank]) => previousRanks.get(userId) === rank);
-      if (hasConverged) {
-        break;
+      const playerDisplayName = playersStats.get(playerId)?.userDisplay?.displayName ?? '';
+      if (!this.belongsToFirstTeam(playerDisplayName) && !this.belongsToSecondTeam(playerDisplayName) && totalPoints > 50) {
+        totalPoints -= 51;
       }
+
+      playerStats.points = totalPoints;
     }
   }
 
