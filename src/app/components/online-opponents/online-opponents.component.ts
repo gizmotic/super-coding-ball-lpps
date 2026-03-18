@@ -9,7 +9,7 @@
  * or see the "LICENSE.txt" file for more details.
  */
 
-import {Component, OnDestroy, OnInit, signal, ViewChild, WritableSignal} from '@angular/core';
+import {Component, OnDestroy, OnInit, ViewChild} from '@angular/core';
 import {AllGames, ConnectionStatus, Opponent} from '../../models/webcom-models';
 import {OnlineService} from '../../services/online.service';
 import {TranslatePipe, TranslateService} from '@ngx-translate/core';
@@ -21,6 +21,7 @@ import {LocalStorageService} from '../../services/local-storage.service';
 import {DancingMonstersComponent} from '../dancing-monsters/dancing-monsters.component';
 import {AnonPicturePipe} from '../../services/anon-picture.pipe';
 import {FormsModule} from '@angular/forms';
+import {appRuntimeConfig} from '../../app-runtime-config';
 
 export enum GamePoint {
   LOST = 0,
@@ -28,10 +29,21 @@ export enum GamePoint {
   WON
 }
 
+type MatchupStats = {wins: number; total: number};
+type AggregatedPlayerStats = {
+  userDisplay: Opponent['userDisplay'];
+  userDisplayTimestamp: number;
+  lastSeen: number;
+  activeMatchups: Map<string, MatchupStats>;
+  rankingBasePoints: number;
+  points: number;
+};
+
 @Component({
   selector: 'app-online-opponents',
   imports: [FormsModule, RouterLink, TranslatePipe, DancingMonstersComponent, AnonPicturePipe],
-  templateUrl: './online-opponents.component.html'
+  templateUrl: './online-opponents.component.html',
+  styleUrl: './online-opponents.component.scss'
 })
 
 export class OnlineOpponentsComponent implements OnInit, OnDestroy {
@@ -40,7 +52,9 @@ export class OnlineOpponentsComponent implements OnInit, OnDestroy {
   GamePoint = GamePoint;
   public ConnectionStatus = ConnectionStatus;
   private connectionStatusSubscription?: Subscription;
+  private refreshIntervalId?: ReturnType<typeof setInterval>;
   opponents: Opponent[] = [];
+  teamOpponents: Opponent[] = [];
   lastResult?: number;
   filteredOpponents: Opponent[] = [];
   personalRanking = 0;
@@ -63,6 +77,58 @@ export class OnlineOpponentsComponent implements OnInit, OnDestroy {
       this.normalized(opp.userDisplay?.displayName ?? '').includes(this.normalized(term)));
   }
 
+  private pointsOfBestTeamPlayers(teamClass: 'team-first' | 'team-second', bestPlayersCount = 10): number {
+    return this.teamOpponents
+      .filter(opponent => this.getTeamClass(opponent) === teamClass)
+      .map(opponent => opponent.points)
+      .sort((a, b) => b - a)
+      .slice(0, bestPlayersCount)
+      .reduce((sum, points) => sum + points, 0);
+  }
+
+  get firstTeamPoints(): number {
+    return this.pointsOfBestTeamPlayers('team-first');
+  }
+
+  get secondTeamPoints(): number {
+    return this.pointsOfBestTeamPlayers('team-second');
+  }
+
+  get teamLeadPercent(): number {
+    const total = this.firstTeamPoints + this.secondTeamPoints;
+    if (total === 0) {
+      return 50;
+    }
+    return Math.max(0, Math.min(100, (this.firstTeamPoints / total) * 100));
+  }
+
+
+  get firstTeamName(): string {
+    return appRuntimeConfig.teamsLeaderboard.firstTeamName;
+  }
+
+  get secondTeamName(): string {
+    return appRuntimeConfig.teamsLeaderboard.secondTeamName;
+  }
+
+  get firstTeamColor(): string {
+    return appRuntimeConfig.teamsLeaderboard.firstTeamColor;
+  }
+
+  get secondTeamColor(): string {
+    return appRuntimeConfig.teamsLeaderboard.secondTeamColor;
+  }
+
+  private belongsToFirstTeam(displayName: string): boolean {
+    const firstTeamName = this.firstTeamName.trim().toLowerCase();
+    return !!firstTeamName && displayName.toLowerCase().startsWith(firstTeamName);
+  }
+
+  private belongsToSecondTeam(displayName: string): boolean {
+    const secondTeamName = this.secondTeamName.trim().toLowerCase();
+    return !!secondTeamName && displayName.toLowerCase().startsWith(secondTeamName);
+  }
+
   private normalized(text: string): string {
     return text.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '');
   }
@@ -78,6 +144,7 @@ export class OnlineOpponentsComponent implements OnInit, OnDestroy {
   }
 
   ngOnInit(): void {
+    this.refreshIntervalId = setInterval(() => window.location.reload(), 60000);
     if (this.onlineService.connectionStatus === ConnectionStatus.Connected) {
       this.loadData();
     }
@@ -92,6 +159,9 @@ export class OnlineOpponentsComponent implements OnInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    if (this.refreshIntervalId) {
+      clearInterval(this.refreshIntervalId);
+    }
     this.connectionStatusSubscription?.unsubscribe();
     this.modalService.dismissAll();
   }
@@ -105,8 +175,21 @@ export class OnlineOpponentsComponent implements OnInit, OnDestroy {
     this.computeOpponentsScore(allGames);
     // Opponents without userDisplay are opponents who have been challenged, but who didn't connect in the 15 days
     this.opponents = this.opponents.filter(opponent => !!opponent.userDisplay);
-    this.computeRankings();
+    this.computeRankings(this.opponents);
     this.filteredOpponents = this.opponents;
+    this.teamOpponents = this.opponents.filter(opponent => this.getTeamClass(opponent) !== '');
+    this.computeRankings(this.teamOpponents);
+  }
+
+  getTeamClass(opponent: Opponent): '' | 'team-first' | 'team-second' {
+    const displayName = opponent.userDisplay?.displayName?.trim() ?? '';
+    if (this.belongsToFirstTeam(displayName)) {
+      return 'team-first';
+    }
+    if (this.belongsToSecondTeam(displayName)) {
+      return 'team-second';
+    }
+    return '';
   }
 
   private computeOpponentsScore(allGames: AllGames): void {
@@ -117,40 +200,139 @@ export class OnlineOpponentsComponent implements OnInit, OnDestroy {
       ?.dailyGames
       ?? {};
 
-    for (const [dayTimestamp, games] of Object.entries(allGames)) {
-      for (const userId of Object.keys(games)) {
-        const userDailyRecap = games[userId];
-        let searchedUser = this.opponents.find(user => user.webcomId === userId);
-        if (!searchedUser) {
-          searchedUser = new Opponent(userId, userDailyRecap.userDisplay, 0, 0, +dayTimestamp);
-          this.opponents.push(searchedUser);
-        } else if (+dayTimestamp > searchedUser.lastSeen) {
-          searchedUser.lastSeen = +dayTimestamp;
-          searchedUser.userDisplay = userDailyRecap.userDisplay;
+    const playersStats = new Map<string, AggregatedPlayerStats>();
+
+    const getOrCreatePlayerStats = (userId: string, userDisplay: Opponent['userDisplay'], lastSeen: number): AggregatedPlayerStats => {
+      let playerStats = playersStats.get(userId);
+      if (!playerStats) {
+        playerStats = {
+          userDisplay,
+          userDisplayTimestamp: userDisplay ? lastSeen : 0,
+          lastSeen,
+          activeMatchups: new Map<string, MatchupStats>(),
+          rankingBasePoints: 0,
+          points: 0
+        };
+        playersStats.set(userId, playerStats);
+      } else {
+        if (lastSeen > playerStats.lastSeen) {
+          playerStats.lastSeen = lastSeen;
         }
+        if (userDisplay && lastSeen >= playerStats.userDisplayTimestamp) {
+          playerStats.userDisplay = userDisplay;
+          playerStats.userDisplayTimestamp = lastSeen;
+        }
+      }
+      return playerStats;
+    };
+
+    for (const [dayTimestamp, games] of Object.entries(allGames)) {
+      for (const [userId, userDailyRecap] of Object.entries(games)) {
+        const timestamp = +dayTimestamp;
+        const playerStats = getOrCreatePlayerStats(userId, userDailyRecap.userDisplay, timestamp);
         if (!userDailyRecap.dailyGames) {
           continue;
         }
-        for (const opponentId of Object.keys(userDailyRecap.dailyGames)) {
-          const gameResult = userDailyRecap.dailyGames[opponentId];
-          const searchedOpponent = this.opponents.find(opp => opp.webcomId === opponentId);
-          if (!searchedOpponent) {
-            this.opponents.push(new Opponent(opponentId, null, 2 - gameResult, 0, 0));
-          } else {
-            searchedOpponent.points += 2 - gameResult;
+        for (const [opponentId, gameResult] of Object.entries(userDailyRecap.dailyGames)) {
+          getOrCreatePlayerStats(opponentId, null, 0);
+          let matchupStats = playerStats.activeMatchups.get(opponentId);
+          if (!matchupStats) {
+            matchupStats = {wins: 0, total: 0};
+            playerStats.activeMatchups.set(opponentId, matchupStats);
           }
-          searchedUser.points += gameResult;
+          matchupStats.total += 1;
+          playerStats.rankingBasePoints += gameResult;
+          if (gameResult === GamePoint.WON) {
+            matchupStats.wins += 1;
+          }
         }
       }
     }
-    this.opponents = this.opponents.map(opponent => {
-      opponent.lastResult = myGames[opponent.webcomId];
+
+    const strengthRanks = this.computeStrengthRanks(playersStats);
+    this.computeLeaderboardPoints(playersStats, strengthRanks);
+
+    this.opponents = Array.from(playersStats.entries()).map(([userId, playerStats]) => {
+      const opponent = new Opponent(userId, playerStats.userDisplay, playerStats.points, 0, playerStats.lastSeen);
+      opponent.lastResult = myGames[userId];
       return opponent;
     });
   }
 
-  private computeRankings(): void {
-    this.opponents.sort((a, b) => {
+  private computeStrengthRanks(playersStats: Map<string, AggregatedPlayerStats>): Map<string, number> {
+    const sortedPlayers = Array.from(playersStats.entries()).sort((a, b) => {
+      if (a[1].rankingBasePoints !== b[1].rankingBasePoints) {
+        return b[1].rankingBasePoints - a[1].rankingBasePoints;
+      }
+      if (a[1].lastSeen !== b[1].lastSeen) {
+        return b[1].lastSeen - a[1].lastSeen;
+      }
+      return b[0].localeCompare(a[0]);
+    });
+
+    const ranks = new Map<string, number>();
+    let formerPoints = Number.NaN;
+    let currentRanking = 0;
+    let exAequoNumber = 1;
+    for (const [playerId, playerStats] of sortedPlayers) {
+      if (formerPoints !== playerStats.rankingBasePoints) {
+        currentRanking += exAequoNumber;
+        exAequoNumber = 1;
+        formerPoints = playerStats.rankingBasePoints;
+      } else {
+        exAequoNumber++;
+      }
+      ranks.set(playerId, currentRanking);
+    }
+    return ranks;
+  }
+
+  private computeLeaderboardPoints(playersStats: Map<string, AggregatedPlayerStats>, strengthRanks: Map<string, number>): void {
+    const rankBasedPoints = (rank: number): number => {
+      const highestScoringRank = appRuntimeConfig.leaderboard.highestScoringRank;
+      const maxPointsPerWin = appRuntimeConfig.leaderboard.maxPointsPerWin;
+      if (rank < 1 || rank > highestScoringRank) {
+        return 0;
+      }
+      return Math.round(maxPointsPerWin - (rank - 1) * ((maxPointsPerWin - 1) / (highestScoringRank - 1)));
+    };
+
+    const topCountedWins = appRuntimeConfig.leaderboard.topCountedWins;
+
+    for (const [playerId, playerStats] of playersStats.entries()) {
+      const candidatePoints: number[] = [];
+      for (const [opponentId, matchupStats] of playerStats.activeMatchups.entries()) {
+        if (matchupStats.wins === 0) {
+          continue;
+        }
+        if (matchupStats.wins / matchupStats.total < 0.5) {
+          continue;
+        }
+        const opponentRank = strengthRanks.get(opponentId) ?? Number.MAX_SAFE_INTEGER;
+        const points = rankBasedPoints(opponentRank);
+        if (points > 0) {
+          candidatePoints.push(points);
+        }
+      }
+
+      candidatePoints.sort((a, b) => b - a);
+      const countedWinsUsed = Math.min(candidatePoints.length, topCountedWins);
+      const maxPossibleForWins = Array.from({length: countedWinsUsed}, (_, index) => rankBasedPoints(index + 1))
+        .reduce((sum, points) => sum + points, 0);
+      let totalPoints = candidatePoints.slice(0, topCountedWins).reduce((sum, points) => sum + points, 0);
+      totalPoints = Math.min(totalPoints, maxPossibleForWins);
+
+      const playerDisplayName = playersStats.get(playerId)?.userDisplay?.displayName ?? '';
+      if (!this.belongsToFirstTeam(playerDisplayName) && !this.belongsToSecondTeam(playerDisplayName) && totalPoints > 50) {
+        totalPoints -= 51;
+      }
+
+      playerStats.points = totalPoints;
+    }
+  }
+
+  private computeRankings(opponents: Opponent[]): void {
+    opponents.sort((a, b) => {
       if (a.points !== b.points) {
         return b.points - a.points;
       } else if (a.lastSeen !== b.lastSeen) {
@@ -163,7 +345,7 @@ export class OnlineOpponentsComponent implements OnInit, OnDestroy {
     let formerPoints = -1;
     let currentRanking = 0;
     let exAequoNumber = 1;
-    for (const opponent of this.opponents) {
+    for (const opponent of opponents) {
       if (formerPoints !== opponent.points) {
         currentRanking += exAequoNumber;
         exAequoNumber = 1;
